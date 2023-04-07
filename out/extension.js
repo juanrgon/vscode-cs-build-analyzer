@@ -1,27 +1,73 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.deactivate = exports.activate = void 0;
-// The module 'vscode' contains the VS Code extensibility API
-// Import the module and reference it with the alias vscode in your code below
 const vscode = require("vscode");
-// This method is called when your extension is activated
-// Your extension is activated the very first time the command is executed
+const xml2js = require("xml2js");
+const fs = require("fs");
+const path = require("path");
+class XmlPropertyCodeLensProvider {
+    async parseXmlFile(filePath) {
+        const parser = new xml2js.Parser();
+        const fileContent = await fs.promises.readFile(filePath, "utf-8");
+        const xmlData = await parser.parseStringPromise(fileContent);
+        return xmlData.Project.PropertyGroup[0];
+    }
+    async findDirectoryBuildProps(document) {
+        let currentDir = path.dirname(document.uri.fsPath);
+        while (currentDir !== path.dirname(currentDir)) {
+            const buildPropsPath = path.join(currentDir, "Directory.Build.props");
+            if (fs.existsSync(buildPropsPath)) {
+                return buildPropsPath;
+            }
+            currentDir = path.dirname(currentDir);
+        }
+        return null;
+    }
+    async provideCodeLenses(document, token) {
+        const codeLenses = [];
+        try {
+            const csprojProperties = await this.parseXmlFile(document.uri.fsPath);
+            const buildPropsPath = await this.findDirectoryBuildProps(document);
+            let buildPropsProperties = {};
+            if (buildPropsPath) {
+                buildPropsProperties = await this.parseXmlFile(buildPropsPath);
+            }
+            for (const property in buildPropsProperties) {
+                if (csprojProperties.hasOwnProperty(property)) {
+                    continue;
+                }
+                const line = document.getText().indexOf(`<${property}>`);
+                if (line !== -1) {
+                    const range = document.lineAt(document.positionAt(line).line).range;
+                    codeLenses.push(new vscode.CodeLens(range, {
+                        title: `${property}: ${buildPropsProperties[property][0]} (from Directory.Build.props)`,
+                        command: "",
+                    }));
+                }
+            }
+            for (const property in csprojProperties) {
+                if (csprojProperties.hasOwnProperty(property)) {
+                    const line = document.getText().indexOf(`<${property}>`);
+                    if (line !== -1) {
+                        const range = document.lineAt(document.positionAt(line).line).range;
+                        codeLenses.push(new vscode.CodeLens(range, {
+                            title: `${property}: ${csprojProperties[property][0]}`,
+                            command: "",
+                        }));
+                    }
+                }
+            }
+        }
+        catch (error) {
+            console.error("Error parsing XML: ", error);
+        }
+        return codeLenses;
+    }
+}
 function activate(context) {
-    // Use the console to output diagnostic information (console.log) and errors (console.error)
-    // This line of code will only be executed once when your extension is activated
-    console.log('Congratulations, your extension "twentytwenty" is now active!');
-    // The command has been defined in the package.json file
-    // Now provide the implementation of the command with registerCommand
-    // The commandId parameter must match the command field in package.json
-    let disposable = vscode.commands.registerCommand('twentytwenty.helloWorld', () => {
-        // The code you place here will be executed every time your command is executed
-        // Display a message box to the user
-        vscode.window.showInformationMessage('Hello World from twentytwenty!');
-    });
-    context.subscriptions.push(disposable);
+    context.subscriptions.push(vscode.languages.registerCodeLensProvider({ language: "xml", scheme: "file", pattern: "**/*.csproj" }, new XmlPropertyCodeLensProvider()));
 }
 exports.activate = activate;
-// This method is called when your extension is deactivated
 function deactivate() { }
 exports.deactivate = deactivate;
 //# sourceMappingURL=extension.js.map
